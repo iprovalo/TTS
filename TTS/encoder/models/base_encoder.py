@@ -1,10 +1,11 @@
 import numpy as np
 import torch
-import torchaudio
+# import torchaudio
 from coqpit import Coqpit
 from torch import nn
 
 from TTS.encoder.losses import AngleProtoLoss, GE2ELoss, SoftmaxAngleProtoLoss
+from TTS.utils.audio import TorchSTFT
 from TTS.utils.generic_utils import set_init_dict
 from TTS.utils.io import load_fsspec
 
@@ -35,29 +36,29 @@ class BaseEncoder(nn.Module):
     def get_torch_mel_spectrogram_class(self, audio_config):
         return torch.nn.Sequential(
             PreEmphasis(audio_config["preemphasis"]),
-            # TorchSTFT(
-            #     n_fft=audio_config["fft_size"],
-            #     hop_length=audio_config["hop_length"],
-            #     win_length=audio_config["win_length"],
-            #     sample_rate=audio_config["sample_rate"],
-            #     window="hamming_window",
-            #     mel_fmin=0.0,
-            #     mel_fmax=None,
-            #     use_htk=True,
-            #     do_amp_to_db=False,
-            #     n_mels=audio_config["num_mels"],
-            #     power=2.0,
-            #     use_mel=True,
-            #     mel_norm=None,
-            # )
-            torchaudio.transforms.MelSpectrogram(
-                sample_rate=audio_config["sample_rate"],
+            TorchSTFT(
                 n_fft=audio_config["fft_size"],
-                win_length=audio_config["win_length"],
                 hop_length=audio_config["hop_length"],
-                window_fn=torch.hamming_window,
+                win_length=audio_config["win_length"],
+                sample_rate=audio_config["sample_rate"],
+                window="hamming_window",
+                mel_fmin=0.0,
+                mel_fmax=None,
+                use_htk=True,
+                do_amp_to_db=False,
                 n_mels=audio_config["num_mels"],
-            ),
+                power=2.0,
+                use_mel=True,
+                mel_norm=None,
+            )
+            # torchaudio.transforms.MelSpectrogram(
+            #     sample_rate=audio_config["sample_rate"],
+            #     n_fft=audio_config["fft_size"],
+            #     win_length=audio_config["win_length"],
+            #     hop_length=audio_config["hop_length"],
+            #     window_fn=torch.hamming_window,
+            #     n_mels=audio_config["num_mels"],
+            # )
         )
 
     @torch.no_grad()

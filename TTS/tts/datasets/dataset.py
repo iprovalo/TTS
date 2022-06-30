@@ -561,6 +561,9 @@ class PhonemeDataset(Dataset):
     def __getitem__(self, index):
         item = self.samples[index]
         ids = self.compute_or_load(item["audio_file"], item["text"])
+        if len(ids) == 0:
+            print("Item must be removed from metadata.csv " + str(item) + " => " + str(ids))
+            #return
         ph_hat = self.tokenizer.ids_to_text(ids)
         return {"text": item["text"], "ph_hat": ph_hat, "token_ids": ids, "token_ids_len": len(ids)}
 
