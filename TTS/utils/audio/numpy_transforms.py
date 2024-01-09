@@ -1,10 +1,11 @@
+from io import BytesIO
 from typing import Tuple
 
 import librosa
 import numpy as np
-import pyworld as pw
 import scipy
 import soundfile as sf
+from librosa import magphase, pyin
 
 # For using kwargs
 # pylint: disable=unused-argument
@@ -200,7 +201,6 @@ def stft(
 def istft(
     *,
     y: np.ndarray = None,
-    fft_size: int = None,
     hop_length: int = None,
     win_length: int = None,
     window: str = "hann",
@@ -219,7 +219,7 @@ def istft(
 
 def griffin_lim(*, spec: np.ndarray = None, num_iter=60, **kwargs) -> np.ndarray:
     angles = np.exp(2j * np.pi * np.random.rand(*spec.shape))
-    S_complex = np.abs(spec).astype(np.complex)
+    S_complex = np.abs(spec).astype(complex)
     y = istft(y=S_complex * angles, **kwargs)
     if not np.isfinite(y).all():
         print(" [!] Waveform is not finite everywhere. Skipping the GL.")
@@ -242,34 +242,86 @@ def compute_stft_paddings(
 
 
 def compute_f0(
-    *, x: np.ndarray = None, pitch_fmax: float = None, hop_length: int = None, sample_rate: int = None, **kwargs
+    *,
+    x: np.ndarray = None,
+    pitch_fmax: float = None,
+    pitch_fmin: float = None,
+    hop_length: int = None,
+    win_length: int = None,
+    sample_rate: int = None,
+    stft_pad_mode: str = "reflect",
+    center: bool = True,
+    **kwargs,
 ) -> np.ndarray:
     """Compute pitch (f0) of a waveform using the same parameters used for computing melspectrogram.
 
     Args:
         x (np.ndarray): Waveform. Shape :math:`[T_wav,]`
+        pitch_fmax (float): Pitch max value.
+        pitch_fmin (float): Pitch min value.
+        hop_length (int): Number of frames between STFT columns.
+        win_length (int): STFT window length.
+        sample_rate (int): Audio sampling rate.
+        stft_pad_mode (str): Padding mode for STFT.
+        center (bool): Centered padding.
 
     Returns:
         np.ndarray: Pitch. Shape :math:`[T_pitch,]`. :math:`T_pitch == T_wav / hop_length`
 
     Examples:
-        >>> WAV_FILE = filename = librosa.util.example_audio_file()
+        >>> WAV_FILE = filename = librosa.example('vibeace')
         >>> from TTS.config import BaseAudioConfig
-        >>> from TTS.utils.audio.processor import AudioProcessor        >>> conf = BaseAudioConfig(pitch_fmax=8000)
+        >>> from TTS.utils.audio import AudioProcessor
+        >>> conf = BaseAudioConfig(pitch_fmax=640, pitch_fmin=1)
         >>> ap = AudioProcessor(**conf)
-        >>> wav = ap.load_wav(WAV_FILE, sr=22050)[:5 * 22050]
+        >>> wav = ap.load_wav(WAV_FILE, sr=ap.sample_rate)[:5 * ap.sample_rate]
         >>> pitch = ap.compute_f0(wav)
     """
     assert pitch_fmax is not None, " [!] Set `pitch_fmax` before caling `compute_f0`."
+    assert pitch_fmin is not None, " [!] Set `pitch_fmin` before caling `compute_f0`."
 
-    f0, t = pw.dio(
-        x.astype(np.double),
-        fs=sample_rate,
-        f0_ceil=pitch_fmax,
-        frame_period=1000 * hop_length / sample_rate,
+    f0, voiced_mask, _ = pyin(
+        y=x.astype(np.double),
+        fmin=pitch_fmin,
+        fmax=pitch_fmax,
+        sr=sample_rate,
+        frame_length=win_length,
+        win_length=win_length // 2,
+        hop_length=hop_length,
+        pad_mode=stft_pad_mode,
+        center=center,
+        n_thresholds=100,
+        beta_parameters=(2, 18),
+        boltzmann_parameter=2,
+        resolution=0.1,
+        max_transition_rate=35.92,
+        switch_prob=0.01,
+        no_trough_prob=0.01,
     )
-    f0 = pw.stonemask(x.astype(np.double), f0, t, sample_rate)
+    f0[~voiced_mask] = 0.0
+
     return f0
+
+
+def compute_energy(y: np.ndarray, **kwargs) -> np.ndarray:
+    """Compute energy of a waveform using the same parameters used for computing melspectrogram.
+    Args:
+      x (np.ndarray): Waveform. Shape :math:`[T_wav,]`
+    Returns:
+      np.ndarray: energy. Shape :math:`[T_energy,]`. :math:`T_energy == T_wav / hop_length`
+    Examples:
+      >>> WAV_FILE = filename = librosa.example('vibeace')
+      >>> from TTS.config import BaseAudioConfig
+      >>> from TTS.utils.audio import AudioProcessor
+      >>> conf = BaseAudioConfig()
+      >>> ap = AudioProcessor(**conf)
+      >>> wav = ap.load_wav(WAV_FILE, sr=ap.sample_rate)[:5 * ap.sample_rate]
+      >>> energy = ap.compute_energy(wav)
+    """
+    x = stft(y=y, **kwargs)
+    mag, _ = magphase(x)
+    energy = np.sqrt(np.sum(mag**2, axis=0))
+    return energy
 
 
 ### Audio Processing ###
@@ -375,16 +427,24 @@ def load_wav(*, filename: str, sample_rate: int = None, resample: bool = False, 
     return x
 
 
-def save_wav(*, wav: np.ndarray, path: str, sample_rate: int = None, **kwargs) -> None:
+def save_wav(*, wav: np.ndarray, path: str, sample_rate: int = None, pipe_out=None, **kwargs) -> None:
     """Save float waveform to a file using Scipy.
 
     Args:
         wav (np.ndarray): Waveform with float values in range [-1, 1] to save.
         path (str): Path to a output file.
         sr (int, optional): Sampling rate used for saving to the file. Defaults to None.
+        pipe_out (BytesIO, optional): Flag to stdout the generated TTS wav file for shell pipe.
     """
     wav_norm = wav * (32767 / max(0.01, np.max(np.abs(wav))))
-    scipy.io.wavfile.write(path, sample_rate, wav_norm.astype(np.int16))
+
+    wav_norm = wav_norm.astype(np.int16)
+    if pipe_out:
+        wav_buffer = BytesIO()
+        scipy.io.wavfile.write(wav_buffer, sample_rate, wav_norm)
+        wav_buffer.seek(0)
+        pipe_out.buffer.write(wav_buffer.read())
+    scipy.io.wavfile.write(path, sample_rate, wav_norm)
 
 
 def mulaw_encode(*, wav: np.ndarray, mulaw_qc: int, **kwargs) -> np.ndarray:

@@ -15,7 +15,7 @@ from TTS.utils.samplers import BucketBatchSampler, PerfectBatchSampler
 torch.manual_seed(0)
 
 dataset_config_en = BaseDatasetConfig(
-    name="ljspeech",
+    formatter="ljspeech",
     meta_file_train="metadata.csv",
     meta_file_val="metadata.csv",
     path="tests/data/ljspeech",
@@ -23,7 +23,7 @@ dataset_config_en = BaseDatasetConfig(
 )
 
 dataset_config_pt = BaseDatasetConfig(
-    name="ljspeech",
+    formatter="ljspeech",
     meta_file_train="metadata.csv",
     meta_file_val="metadata.csv",
     path="tests/data/ljspeech",
@@ -75,7 +75,6 @@ class TestSamplers(unittest.TestCase):
         assert is_balanced(en, pt), "Language Weighted sampler is supposed to be balanced"
 
     def test_speaker_weighted_random_sampler(self):  # pylint: disable=no-self-use
-
         weighted_sampler = torch.utils.data.sampler.WeightedRandomSampler(
             get_speaker_balancer_weights(train_samples), len(train_samples)
         )
